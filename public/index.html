@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[DAN] MOCK</title>
+<link rel="stylesheet" href="/_mock/style.css">
+<script src="/_mock/icons.js"></script>
+</head>
+<body>
+  <header>
+    <a class="dan-logo" href="/_mock"><span class="dan-br">[</span>DAN<span class="dan-br">]</span> MOCK</a>
+    <span class="tagline">Define a response. Hit the URL. No backend to deploy.</span>
+  </header>
+
+  <aside class="intro-box">
+    <p class="intro-heading dan-dot">Sovereign <span class="dan-br">[</span>AI<span class="dan-br">]</span> system of <span class="dan-br">[</span>Systems<span class="dan-br">]</span></p>
+    <p><span class="dan-br">[</span>DAN<span class="dan-br">]</span> is a sovereign AI system of
+      systems — the Digital Architecture Network. Built edge-first, on-device, in the UAE.</p>
+    <p class="intro-strong">Privacy is the architecture, not the afterthought.</p>
+    <p class="intro-mono dan-dot">
+      <span class="dan-br">[</span>DAN<span class="dan-br">]</span> — DIGITAL ARCHITECTURE NETWORK, LET'S GO <span class="dan-br">[</span>BEYOND<span class="dan-br">]</span>
+    </p>
+    <p class="intro-mono">
+      STRATO MESH NETWORK<br>
+      <span class="site-text">www.thedubai.ai</span>
+    </p>
+  </aside>
+
+  <div class="layout">
+  <main>
+    <div class="dan-card">
+      <h2><span id="icon-server"></span>Server</h2>
+      <div id="status">Reading real server state…</div>
+    </div>
+
+    <div class="dan-card">
+      <h2><span id="icon-route"></span>New route</h2>
+      <form class="route-form" id="routeForm">
+        <select id="fMethod">
+          <option>GET</option>
+          <option>POST</option>
+          <option>PUT</option>
+          <option>PATCH</option>
+          <option>DELETE</option>
+          <option value="*">ANY</option>
+        </select>
+        <input type="text" id="fPath" placeholder="/api/users  (end with * for a prefix match)" required>
+        <input type="number" id="fStatus" placeholder="200" value="200" min="100" max="599">
+        <textarea id="fBody" placeholder='{"real": "json response body"}'></textarea>
+        <div class="form-row-2">
+          <label>delay <input type="number" id="fDelay" placeholder="0" value="0" min="0"> ms</label>
+          <button type="submit" class="dan-btn">Add route</button>
+          <span class="hint" id="formStatus"></span>
+        </div>
+      </form>
+    </div>
+
+    <div class="dan-card">
+      <h2><span id="icon-list"></span>Real routes</h2>
+      <ul class="route-list" id="routeList"></ul>
+    </div>
+  </main>
+  </div>
+
+  <footer>
+    <strong><span class="dan-br">[</span>DAN<span class="dan-br">]</span> MEMORY SMASH</strong> —
+    the full codebase-memory engine this tool's mocking capability also lives inside —
+    is coming soon.
+  </footer>
+
+  <script>
+    // px=3 — a small inline glyph beside an h2 label, matching the fix already applied to
+    // DAN-OSS-COMMIT's own icons (the library's 12px default rendered far too large here).
+    document.getElementById("icon-server").innerHTML = DANIcons.dot("server", 3);
+    document.getElementById("icon-route").innerHTML = DANIcons.dot("plus", 3);
+    document.getElementById("icon-list").innerHTML = DANIcons.dot("menu", 3);
+  </script>
+  <script type="module" src="/_mock/app.js"></script>
+</body>
+</html>

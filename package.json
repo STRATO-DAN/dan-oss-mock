@@ -1,0 +1,41 @@
+{
+  "name": "dan-oss-mock",
+  "version": "0.1.0",
+  "description": "[DAN] MOCK — local-first API mocking. Define a response, hit the URL, no backend to deploy.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "dan-oss-mock": "bin/dan-oss-mock.js"
+  },
+  "scripts": {
+    "prepare": "husky || true",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "examples",
+    "LICENSE",
+    "TRADEMARK.md"
+  ],
+  "keywords": [
+    "api",
+    "mock",
+    "mocking",
+    "cli",
+    "developer-tools"
+  ],
+  "author": "DAN Systems",
+  "homepage": "https://github.com/STRATO-DAN/dan-oss-mock",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/STRATO-DAN/dan-oss-mock.git"
+  }
+}

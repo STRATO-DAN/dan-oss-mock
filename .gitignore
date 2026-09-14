@@ -1,0 +1,6 @@
+.env*
+node_modules/
+.dan-oss-mock.json
+examples/example-routes.json
+*.log
+.DS_Store
