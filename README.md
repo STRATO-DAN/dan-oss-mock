@@ -7,7 +7,7 @@
 **Local-first API mocking — define a response, hit the URL. No backend to deploy.**
 
 [![CI](https://github.com/STRATO-DAN/dan-oss-mock/actions/workflows/ci.yml/badge.svg)](https://github.com/STRATO-DAN/dan-oss-mock/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/dan-oss-mock.svg)](https://www.npmjs.com/package/dan-oss-mock)
+[![npm version](https://img.shields.io/npm/v/@strato-dan/mock.svg)](https://www.npmjs.com/package/@strato-dan/mock)
 [![runtime deps](https://img.shields.io/badge/runtime%20deps-0-2e9e56.svg)](#dependencies)
 [![docs](https://img.shields.io/badge/docs-README-blue.svg)](#use)
 [![license](https://img.shields.io/badge/license-MIT-informational.svg)](LICENSE)
@@ -15,7 +15,7 @@
 </div>
 
 > **⚡ Zero install · zero runtime dependencies.** No `npm install`, no build step, no config —
-> `npx dan-oss-mock` runs it and `npm test` tests it. Pure Node standard library (Node ≥ 18).
+> `npx @strato-dan/mock` runs it and `npm test` tests it. Pure Node standard library (Node ≥ 18).
 > Full breakdown under [Dependencies](#dependencies).
 
 Local-first API mocking. Define a response, hit the URL — no backend to deploy, nothing to
@@ -24,7 +24,7 @@ configure beyond the route itself.
 ## Use
 
 ```bash
-npx dan-oss-mock
+npx @strato-dan/mock
 ```
 
 Opens the management UI at `http://127.0.0.1:4871/_mock` (loopback only). Add a route — method,
@@ -42,7 +42,7 @@ survive a restart.
 Everything below is real output from a live run on loopback — start the server, define one route
 through the management API, hit it, then hit a path that has no mock. `DAN_OSS_MOCK_PORT` here just
 picks a non-default port for the demo; from a published install the start command is
-`npx dan-oss-mock`, and from a checkout it's `node bin/dan-oss-mock.js` as shown.
+`npx @strato-dan/mock`, and from a checkout it's `node bin/dan-oss-mock.js` as shown.
 
 **1. Start it.** Routes persist to `.dan-oss-mock.json` in the directory you launch from, and the
 `/_mock` UI opens in your browser automatically:
@@ -154,7 +154,7 @@ The first question is usually *"how much do I have to install?"* — here, **not
 | | |
 |---|---|
 | **Runtime dependencies** | **0** — Node standard library only (`http`, `fs`, `path`, …) |
-| **Install to run** | none — `npx dan-oss-mock` |
+| **Install to run** | none — `npx @strato-dan/mock` |
 | **Install to test** | none — `npm test` uses Node's built-in test runner |
 | **Node** | ≥ 18 |
 | **Dev-only** | `husky` — pulled in *only* if you clone to contribute (it wires the git hooks); never needed to use the tool |
