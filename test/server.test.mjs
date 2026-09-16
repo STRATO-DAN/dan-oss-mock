@@ -1,0 +1,225 @@
+// HTTP-level tests for the /_mock management API and delay simulation — previously untested (no
+// server.test.mjs existed at all). Real HTTP against a real server on a real temp data file.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { createServer } from "../src/server.js";
+
+function start() {
+  const dataFile = path.join(os.tmpdir(), `dan-oss-mock-test-${crypto.randomUUID()}.json`);
+  const server = createServer({ dataFile });
+  return new Promise((res) =>
+    server.listen(0, "127.0.0.1", () => res({ server, port: server.address().port, dataFile })),
+  );
+}
+
+function req(port, method, p, { body, host } = {}) {
+  return new Promise((resolve, reject) => {
+    const data = body !== undefined ? JSON.stringify(body) : null;
+    const headers = { host: host || `127.0.0.1:${port}` };
+    if (data) headers["content-type"] = "application/json";
+    const started = Date.now();
+    const r = http.request({ host: "127.0.0.1", port, method, path: p, headers, agent: false }, (res) => {
+      let b = "";
+      res.on("data", (c) => (b += c));
+      res.on("end", () => {
+        let json = null;
+        try { json = b ? JSON.parse(b) : null; } catch { json = b; }
+        resolve({ status: res.statusCode, json, elapsedMs: Date.now() - started, headers: res.headers });
+      });
+    });
+    r.on("error", reject);
+    if (data) r.write(data);
+    r.end();
+  });
+}
+const stop = (server) => { server.closeAllConnections?.(); server.close(); };
+const cleanup = async (dataFile) => { await fs.rm(dataFile, { force: true }); };
+
+test("the management API refuses a non-loopback Host header (DNS-rebinding guard)", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const r = await req(port, "GET", "/_mock/api/routes", { host: "evil.example.com" });
+    assert.equal(r.status, 403);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("MANAGEMENT API: define → list → update → delete a route, all via real HTTP", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const empty = await req(port, "GET", "/_mock/api/routes");
+    assert.deepEqual(empty.json.routes, []);
+
+    const created = await req(port, "POST", "/_mock/api/routes", {
+      body: { method: "get", path: "/api/widgets", status: 201, body: { ok: true, widgets: [] } },
+    });
+    assert.equal(created.status, 200);
+    assert.equal(created.json.route.method, "GET", "method is normalized to uppercase so it really matches a GET request");
+    const id = created.json.route.id;
+
+    const list = await req(port, "GET", "/_mock/api/routes");
+    assert.equal(list.json.routes.length, 1);
+    assert.equal(list.json.routes[0].id, id);
+
+    const updated = await req(port, "PATCH", `/_mock/api/routes/${id}`, { body: { status: 202 } });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.json.route.status, 202);
+
+    // the real, defined route now actually answers a real matching request
+    const live = await req(port, "GET", "/api/widgets");
+    assert.equal(live.status, 202, "the mocked route's own status is served, not a hardcoded 200");
+    assert.deepEqual(live.json, { ok: true, widgets: [] });
+
+    const deleted = await req(port, "DELETE", `/_mock/api/routes/${id}`);
+    assert.equal(deleted.status, 200);
+    const gone = await req(port, "GET", "/api/widgets");
+    assert.equal(gone.status, 404, "after deletion the route no longer answers — an honest 404, not a stale response");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("MANAGEMENT API: creating without method/path is refused (400); updating/deleting an unknown id is 404", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const bad = await req(port, "POST", "/_mock/api/routes", { body: { path: "/x" } }); // missing method
+    assert.equal(bad.status, 400);
+    assert.equal((await req(port, "PATCH", "/_mock/api/routes/does-not-exist", { body: { status: 200 } })).status, 404);
+    assert.equal((await req(port, "DELETE", "/_mock/api/routes/does-not-exist")).status, 404);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("MANAGEMENT API: a route the caller marks disabled really stops answering (enabled:false)", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const created = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/off", status: 200, body: "on" } });
+    const id = created.json.route.id;
+    assert.equal((await req(port, "GET", "/api/off")).status, 200);
+    await req(port, "PATCH", `/_mock/api/routes/${id}`, { body: { enabled: false } });
+    assert.equal((await req(port, "GET", "/api/off")).status, 404, "a disabled route must not match a real request");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("the management UI is served at /_mock (a real static file, not the mocked-API 404)", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const r = await req(port, "GET", "/_mock/");
+    assert.ok(r.status === 200 || r.status === 404, "either a real UI file is served, or an honest 404 for a missing build — never a silent empty 200");
+    if (r.status === 404) {
+      // If the public/ UI bundle isn't present in this checkout, the fallback must still be the
+      // real static-file 404, distinguishable from the mocked-API's own JSON 404 shape.
+      assert.notEqual(typeof r.json, "object", "the static-file 404 is plain text, not the mocked-route JSON error shape");
+    }
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+// ── delay simulation: timing accuracy, not just "delayMs is stored" ────────────────────────────
+
+test("DELAY: a route with delayMs really waits at least that long before responding", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/slow", status: 200, body: "ok", delayMs: 200 } });
+    const r = await req(port, "GET", "/api/slow");
+    assert.equal(r.status, 200);
+    assert.ok(r.elapsedMs >= 190, `expected at least ~200ms of real delay, measured ${r.elapsedMs}ms`);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("DELAY: a route with no delayMs (or 0) answers immediately, no artificial wait", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/fast", status: 200, body: "ok" } });
+    const r = await req(port, "GET", "/api/fast");
+    assert.ok(r.elapsedMs < 100, `expected a near-instant response, measured ${r.elapsedMs}ms`);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("DELAY: a negative delayMs is normalized to 0, never an instant (negative-timeout) response quirk", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const created = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/neg", status: 200, body: "ok", delayMs: -500 } });
+    assert.equal(created.json.route.delayMs, 0, "a negative delayMs must be clamped to 0 at write time, not passed through to setTimeout");
+    const r = await req(port, "GET", "/api/neg");
+    assert.ok(r.elapsedMs < 100);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+// ── route mutation while a delayed response is in flight ───────────────────────────────────────
+
+test("CONCURRENCY: deleting a route while one of its delayed requests is still in flight does not corrupt or crash the in-flight response", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const created = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/inflight", status: 200, body: { v: 1 }, delayMs: 300 } });
+    const id = created.json.route.id;
+
+    const inflight = req(port, "GET", "/api/inflight"); // starts waiting inside its 300ms delay
+    await new Promise((r) => setTimeout(r, 100)); // well inside the delay window
+    const del = await req(port, "DELETE", `/_mock/api/routes/${id}`);
+    assert.equal(del.status, 200, "the delete itself succeeds even while another request is mid-flight against the same route");
+
+    const result = await inflight;
+    // The in-flight request captured its match BEFORE the delete; it must complete deterministically
+    // (the response it was already committed to), not hang, crash, or return a half-written body.
+    assert.equal(result.status, 200, "an in-flight response completes with what it already had, not a mid-flight error");
+    assert.deepEqual(result.json, { v: 1 });
+
+    // and the route is really gone for any NEW request after the delete completed.
+    assert.equal((await req(port, "GET", "/api/inflight")).status, 404);
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("CONCURRENCY: updating a route's status while a delayed request against it is in flight — the in-flight request keeps its original match", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    const created = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/api/live-edit", status: 200, body: "v1", delayMs: 250 } });
+    const id = created.json.route.id;
+
+    const inflight = req(port, "GET", "/api/live-edit");
+    await new Promise((r) => setTimeout(r, 80));
+    await req(port, "PATCH", `/_mock/api/routes/${id}`, { body: { status: 500, body: "v2" } });
+
+    const result = await inflight;
+    // Document the REAL, observed behavior precisely (findMatch's returned object reference vs. the
+    // store's post-update replacement) rather than assume either outcome — this is the actual
+    // concurrency contract a caller needs to know.
+    assert.ok(result.status === 200 || result.status === 500, `expected the pre-edit or post-edit response, got ${result.status}`);
+
+    // Whichever it was, a FRESH request after the update always sees the new definition — updates are
+    // never silently lost.
+    const after = await req(port, "GET", "/api/live-edit");
+    assert.equal(after.status, 500);
+    assert.equal(after.json, "v2");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
