@@ -32,10 +32,19 @@ export class RouteStore {
   }
 
   async save() {
+    // Serialize saves. Two concurrent writers previously shared ONE temp path (`.<pid>.tmp`) and could
+    // race the rename AND lose an update (last rename wins the file). Each save now waits for the previous
+    // one (ordered writes → the last reflects the latest routes) and uses a per-write unique temp name so
+    // two in-flight writers never collide. Atomic replacement is not atomic concurrent persistence.
     const dir = path.dirname(this.filePath);
-    const tmp = path.join(dir, `.${path.basename(this.filePath)}.${process.pid}.tmp`);
-    await fs.writeFile(tmp, JSON.stringify({ routes: this.routes }, null, 2), "utf8");
-    await fs.rename(tmp, this.filePath);
+    const prev = this._saveChain || Promise.resolve();
+    const mine = prev.catch(() => {}).then(async () => {
+      const tmp = path.join(dir, `.${path.basename(this.filePath)}.${process.pid}.${crypto.randomUUID()}.tmp`);
+      await fs.writeFile(tmp, JSON.stringify({ routes: this.routes }, null, 2), "utf8");
+      await fs.rename(tmp, this.filePath);
+    });
+    this._saveChain = mine;
+    return mine;
   }
 
   list() {

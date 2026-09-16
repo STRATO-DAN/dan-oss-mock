@@ -43,6 +43,27 @@ test("save() then a fresh load() from the same file round-trips the real route l
     assert.equal(reloaded.list()[0].path, "/api/users");
   }));
 
+test("CONCURRENCY: many overlapping save() calls all persist — no rename race, no lost update", () =>
+  withStore(async (store, dir) => {
+    const N = 30;
+    // Fire N overlapping saves, each after adding one more route. Before serialization every save shared
+    // ONE `.<pid>.tmp` path → concurrent writes could race the rename (throw) and/or lose an update (the
+    // rename that lands last wins the file, even with a staler, shorter route list).
+    await Promise.all(
+      Array.from({ length: N }, (_, i) => {
+        store.add({ method: "GET", path: `/api/r${i}`, body: "[]" });
+        return store.save();
+      }),
+    );
+    const reloaded = new RouteStore(path.join(dir, "routes.json"));
+    await reloaded.load();
+    assert.equal(
+      reloaded.list().length,
+      N,
+      "every concurrently-added route is durably persisted — no update lost to a shared-temp-file collision",
+    );
+  }));
+
 test("update() patches an existing route by id without letting the id itself be overwritten", () =>
   withStore((store) => {
     const route = store.add({ method: "GET", path: "/api/users" });
