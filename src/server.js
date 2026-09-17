@@ -89,7 +89,24 @@ function isLoopbackHost(hostHeader) {
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
 }
 
+// Last-resort backstop so a single bad route (or any stray async error) can never take the whole dev server
+// down — the primary defenses are per-route validation (store.js) and the try/catch around the serve block
+// below; this only catches whatever slips past both. Installed once per process, no matter how many servers
+// are created (tests create many), so it never leaks EventEmitter listeners.
+let processGuardsInstalled = false;
+function installProcessGuards() {
+  if (processGuardsInstalled) return;
+  processGuardsInstalled = true;
+  process.on("uncaughtException", (err) => {
+    console.error(`[DAN] MOCK: uncaught exception (server kept alive): ${(err && err.stack) || err}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error(`[DAN] MOCK: unhandled rejection (server kept alive): ${(reason && reason.stack) || reason}`);
+  });
+}
+
 export function createServer({ dataFile }) {
+  installProcessGuards();
   const store = new RouteStore(dataFile);
   const loadPromise = store.load();
 
@@ -146,18 +163,41 @@ export function createServer({ dataFile }) {
     }
 
     // --- the actual mocked API --------------------------------------------------------------
-    const match = findMatch(store.list(), req.method, p);
-    if (!match) {
-      return sendJson(res, 404, {
-        ok: false,
-        reason: `[DAN] MOCK: no real route configured for ${req.method} ${p}. Define one at /_mock.`,
-      });
+    // Everything from the match onward is wrapped: a route persisted by an OLDER build (before add()/update()
+    // validated) can still carry a non-string path (matcher TypeError), an out-of-range status (writeHead
+    // RangeError), or an illegal header (ERR_INVALID_CHAR) — serve it as a clean 500 instead of crashing the
+    // process (which, with the bad route on disk, would re-crash on every restart).
+    try {
+      const match = findMatch(store.list(), req.method, p);
+      if (!match) {
+        return sendJson(res, 404, {
+          ok: false,
+          reason: `[DAN] MOCK: no real route configured for ${req.method} ${p}. Define one at /_mock.`,
+        });
+      }
+      if (match.delayMs) await sleep(match.delayMs);
+      // Default content-type by body shape: a string is served as text/plain, an object/array as JSON — never
+      // mislabel a plain string as application/json. A content-type the route sets itself (any casing) wins.
+      const bodyIsString = typeof match.body === "string";
+      const routeSetsContentType =
+        match.headers && Object.keys(match.headers).some((k) => k.toLowerCase() === "content-type");
+      const headers = { ...match.headers };
+      if (!routeSetsContentType) {
+        headers["content-type"] = bodyIsString ? "text/plain; charset=utf-8" : "application/json; charset=utf-8";
+      }
+      res.writeHead(match.status, headers);
+      res.end(bodyIsString ? match.body : JSON.stringify(match.body));
+    } catch (err) {
+      console.error(`[DAN] MOCK: failed serving ${req.method} ${p}: ${err.message}`);
+      if (!res.headersSent) {
+        sendJson(res, 500, {
+          ok: false,
+          reason: `[DAN] MOCK: route is misconfigured and could not be served: ${err.message}`,
+        });
+      } else {
+        res.end();
+      }
     }
-    if (match.delayMs) await sleep(match.delayMs);
-    const headers = { "content-type": "application/json; charset=utf-8", ...match.headers };
-    res.writeHead(match.status, headers);
-    const body = typeof match.body === "string" ? match.body : JSON.stringify(match.body);
-    res.end(body);
   });
 
   server._store = store; // exposed for tests only
