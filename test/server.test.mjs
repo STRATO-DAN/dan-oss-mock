@@ -223,3 +223,81 @@ test("CONCURRENCY: updating a route's status while a delayed request against it 
     await cleanup(dataFile);
   }
 });
+
+// ── input validation over HTTP (M1): a bad field is a clean 400, never a crash, never persisted ─────────
+
+test("VALIDATION over HTTP: a bad field (out-of-range status, illegal header, non-string path) is refused 400 and not persisted", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    assert.equal((await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/x", status: 700 } })).status, 400);
+    assert.equal((await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/x", headers: { "X-Bad": "a\r\nInjected: 1" } } })).status, 400);
+    assert.equal((await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: 123 } })).status, 400);
+    const list = await req(port, "GET", "/_mock/api/routes");
+    assert.equal(list.json.routes.length, 0, "no rejected route was persisted");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+// ── resilience against an ALREADY-persisted bad route (M1): serve 500, never crash → never re-crash ─────
+
+test("RESILIENCE: routes persisted by an older (non-validating) build are served as 500, not a process crash, and don't re-crash on reload", async () => {
+  const dataFile = path.join(os.tmpdir(), `dan-oss-mock-test-${crypto.randomUUID()}.json`);
+  // Hand-write a data file exactly as an older build (before add()/update() validated) could have left it:
+  // an out-of-Node-range status (writeHead RangeError), an illegal header (writeHead ERR_INVALID_CHAR), and a
+  // non-string path (matcher TypeError). Each would previously crash the process; on restart the same file
+  // would re-crash it — a self-reinflicting DoS. Now each is an honest 500 and the server stays up.
+  await fs.writeFile(
+    dataFile,
+    JSON.stringify({
+      routes: [
+        { id: "a", method: "GET", path: "/bad-status", status: 99999, headers: {}, body: "x", enabled: true },
+        { id: "b", method: "GET", path: "/bad-header", status: 200, headers: { "X-Bad": "a\r\nInjected: 1" }, body: "x", enabled: true },
+        { id: "c", method: "GET", path: 123, status: 200, headers: {}, body: "x", enabled: true },
+      ],
+    }),
+  );
+  const server = createServer({ dataFile });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  try {
+    assert.equal((await req(port, "GET", "/bad-status")).status, 500, "an out-of-range status is a 500, not a crash");
+    assert.equal((await req(port, "GET", "/bad-header")).status, 500, "an illegal header is a 500, not a crash");
+    assert.equal((await req(port, "GET", "/no-match")).status, 500, "a non-string persisted path (matcher TypeError) is a 500, not a crash");
+    // Still alive and serving after all three would-be crashes — the whole point of the fix.
+    assert.equal((await req(port, "GET", "/bad-status")).status, 500, "the process survived and keeps serving");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+// ── content-type honesty (M4): a string body isn't mislabeled application/json ───────────────────────────
+
+test("CONTENT-TYPE: a string body is served as text/plain and an object body as application/json (M4)", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/str", status: 200, body: "just text" } });
+    await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/obj", status: 200, body: { a: 1 } } });
+    const s = await req(port, "GET", "/str");
+    assert.match(s.headers["content-type"], /^text\/plain/, "a plain string must not be mislabeled application/json");
+    const o = await req(port, "GET", "/obj");
+    assert.match(o.headers["content-type"], /^application\/json/, "an object/JSON body is served as JSON");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});
+
+test("CONTENT-TYPE: a route that sets its own content-type (any casing) overrides the body-shape default", async () => {
+  const { server, port, dataFile } = await start();
+  try {
+    await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/xml", status: 200, body: "<x/>", headers: { "Content-Type": "application/xml" } } });
+    const r = await req(port, "GET", "/xml");
+    assert.match(r.headers["content-type"], /^application\/xml/, "the route's own content-type wins over the string default");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+  }
+});

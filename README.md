@@ -126,6 +126,11 @@ GET /api/does-not-exist -> 404 {"ok":false,"reason":"[DAN] MOCK: no real route c
 First enabled, matching route wins, in the order you added them — same "first match wins" rule
 any real router uses.
 
+Matching is **literal**, so a trailing slash is significant: `/api/users` and `/api/users/` are
+two different paths and will not match each other. This is deliberate (the same honest,
+no-surprises exact matching the rest of the tool uses) — if you need both, define both, or use a
+trailing-`*` prefix (`/api/users*`).
+
 A request that matches nothing gets a real, honest 404 naming the method and path that had no
 mock — never a silent empty response.
 
@@ -140,7 +145,11 @@ mock — never a silent empty response.
 
 - Never listens on anything but `127.0.0.1`.
 - Never guesses a response for an unmatched route — a real 404 instead.
-- Never loses a route to a crash mid-save — writes are atomic (temp file + rename).
+- Never loses a route to a crash mid-save — writes are atomic (temp file + rename), and a failed
+  write cleans up its own temp file rather than orphaning it.
+- Never lets a single malformed route take the process down — an invalid field (bad path, out-of-
+  range status, illegal header, absurd delay) is rejected with a `400` at define time, and a bad
+  route already on disk from an older build is served as a `500` instead of crashing.
 
 ## When to use this
 
@@ -153,6 +162,11 @@ mock — never a silent empty response.
 no OpenAPI import, no recording/replay of real traffic. Routes live in one local JSON file, so
 it's not built for sharing live mock state across a team or CI runners without you wiring that up
 yourself (pointing `DAN_OSS_MOCK_DATA` at a shared/committed file works, but isn't automatic).
+
+**One writer at a time.** MOCK is a single-process dev tool. Each write to the data file is atomic
+(temp file + rename, so a crash mid-write never corrupts it), but the tool does **not** coordinate
+between *separate* processes pointed at the *same* file — if two instances edit routes concurrently,
+the last save wins and the other's change is silently overwritten. Run one instance per data file.
 
 ## Dependencies
 
@@ -207,10 +221,13 @@ npm test
 ```
 
 Runs the unit suite on Node's own built-in test runner (`node --test`) — no `npm install`, no
-dependencies to pull. As of this release that's **13 tests, all passing**: six cover the path
-matcher (exact vs. trailing-`*` prefix, method matching, disabled routes, and the first-match-wins
-order), and seven cover the route store (defaults, atomic-write save/reload round-trip, update,
-remove, and recovering from a corrupt data file).
+dependencies to pull. As of this release that's **35 tests, all passing**: six cover the path
+matcher (exact vs. trailing-`*` prefix, method matching, disabled routes, and first-match-wins
+order), fifteen cover the route store (defaults, field validation, the `delayMs` cap, atomic-write
+save/reload round-trip and temp-file cleanup on a failed rename, update, remove, and recovering
+from a corrupt data file), and fourteen exercise the HTTP layer (the `/_mock` management API,
+delay-timing accuracy, in-flight route mutation, input validation and content-type over real HTTP,
+and resilience — a route persisted by an older build is served as a 500, never a process crash).
 
 ## Contributing
 
