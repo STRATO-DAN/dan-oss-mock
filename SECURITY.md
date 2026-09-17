@@ -1,5 +1,21 @@
 # Security Policy
 
+## 🔴 This tool has no authentication, by design
+
+MOCK is a local development mock — its management API and every mocked route are
+**unauthenticated**, deliberately, because it's a dev-only tool where localhost is the only
+boundary that exists. This is **not** an oversight to report as a vulnerability: it's the stated
+scope. What it means in practice:
+
+- **Never** bind it to a non-loopback interface (`0.0.0.0` or a real network address).
+- **Never** expose it through a reverse proxy, tunnel, or port-forward.
+- **Never** point it at real production traffic, secrets, or data — anything MOCK returns is
+  whatever you configured it to return, and anything sent to it is visible to any local process.
+
+A real vulnerability report for this tool is about something *other* than the absence of auth on
+the mock surface itself (e.g. a path-traversal bug, a crash, a real bypass of a claim this README
+actually makes) — see below for how to report that.
+
 ## Reporting a vulnerability
 
 If you believe you've found a security vulnerability in any DAN Systems open-source project under
