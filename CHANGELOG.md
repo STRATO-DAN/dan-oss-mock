@@ -3,6 +3,39 @@
 All notable changes to `@strato-dan/mock` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.2.0] — 2026-09-17
+
+Cross-cutting polish. All additive — no behavior change to existing routes, and still **zero runtime
+dependencies** (Node standard library only).
+
+### Added
+- **Launcher flags (hand-rolled, no dependency).** `--version` (`-v`) prints the version and exits
+  `0`; `--help` (`-h`) prints usage, the environment variables, and the exit-code contract, then
+  exits `0`; `--json` prints the startup banner as one JSON object `{url,port,dataFile}` (and skips
+  the browser auto-open) for scripts and CI. The no-flag invocation is unchanged.
+- **Honest startup exit codes.** A startup failure — port already in use (`EADDRINUSE`), or an
+  unusable data-file path (missing directory, not writable, or a directory itself) — now prints a
+  single-line reason to stderr and exits `1`, never a raw stack. An unknown flag is a usage error and
+  exits `2`. A clean start (or `--version`/`--help`) is `0`. Documented in the README. The runtime
+  `uncaughtException`/`unhandledRejection` guards that keep the server *alive* after a bad request are
+  untouched — this is only about failing a bad *startup* honestly.
+- **`Makefile` with `make help`.** `make test` (full suite), `make attack` (only the adversarial
+  hardening tests — malformed route → `400`, DNS-rebind → `403`, CRLF header-injection reject,
+  corrupt-data-file tolerance, crash-survival of a pre-persisted bad route, the `delayMs` cap),
+  `make demo` (a reproducible end-to-end run on an ephemeral port and a throwaway data file), and
+  `make bench`.
+- **`make bench` + [BENCHMARKS.md](BENCHMARKS.md).** Real, reproducible measurements: serving latency
+  over live loopback HTTP, and `findMatch()` cost scaling at 1 / 100 / 1000 configured routes
+  (worst-case full scan). Node stdlib only; runs in well under a second.
+- **README: Command-line flags, Exit codes, and a Scriptable & CI section**, plus a "Try the attacks:
+  `make attack`" pointer and a link to the benchmarks.
+- **Six launcher-CLI regression tests** covering the flags and the startup exit-code contract.
+
+### Notes / honest limits
+- Still **no authn/authz by design** — a local dev tool bound to `127.0.0.1`. Nothing here adds a
+  trust boundary; it is CLI ergonomics, tooling, and docs.
+- 35 → 41 tests.
+
 ## [0.1.2] — 2026-09-17
 
 ### Fixed

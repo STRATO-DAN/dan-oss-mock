@@ -206,7 +206,15 @@ export function createServer({ dataFile }) {
 
 export function listen(port, dataFile) {
   const server = createServer({ dataFile });
-  return new Promise((resolve) => {
-    server.listen(port, "127.0.0.1", () => resolve(server));
+  return new Promise((resolve, reject) => {
+    // Reject on a bind failure (EADDRINUSE, EACCES, …) so the launcher can report a one-line startup
+    // error and exit non-zero instead of surfacing an unhandled 'error' event. The listener is removed
+    // once we're listening, so this never catches a runtime error after a successful start.
+    const onError = (err) => reject(err);
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.removeListener("error", onError);
+      resolve(server);
+    });
   });
 }
