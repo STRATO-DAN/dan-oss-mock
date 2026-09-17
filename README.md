@@ -141,6 +141,52 @@ mock — never a silent empty response.
 | `DAN_OSS_MOCK_PORT` | `4871` | Local port (serves both the mocked API and the `/_mock` UI) |
 | `DAN_OSS_MOCK_DATA` | `.dan-oss-mock.json` in the current directory | Where routes are saved |
 
+## Command-line flags
+
+All flags are hand-rolled with the Node standard library — no argument-parsing dependency. The
+no-flag invocation is unchanged.
+
+| Flag | What it does |
+|---|---|
+| `--version` (`-v`) | Print the version and exit `0`. |
+| `--help` (`-h`) | Print usage, the env vars above, and the exit-code contract, then exit `0`. |
+| `--json` | Start normally, but print the startup banner as **one JSON object** `{url,port,dataFile}` on stdout instead of the human-readable lines — and skip the browser auto-open. Everything else is identical. |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Clean start (or `--version` / `--help`). |
+| `1` | Startup failure — the port is already in use, or the data-file path is unusable (missing directory, not writable, or a directory itself). A single-line reason goes to stderr; never a raw stack. |
+| `2` | Usage error — an unknown flag. |
+
+The runtime `uncaughtException` / `unhandledRejection` guards that keep the server *alive* after a
+bad route are unrelated to these — those are about surviving a bad request, this is about failing a
+bad *startup* honestly.
+
+## Scriptable & CI
+
+MOCK is a plain, dependency-free CLI, so it drops straight into a script or CI step. The `--json`
+banner is machine-parseable, and the exit codes above mean a failed start actually fails the step:
+
+```bash
+# Launch on a chosen port and read the banner back in a script:
+DAN_OSS_MOCK_PORT=4899 node bin/dan-oss-mock.js --json
+# -> {"url":"http://127.0.0.1:4899","port":4899,"dataFile":".../.dan-oss-mock.json"}
+```
+
+A [`Makefile`](Makefile) wraps the common tasks (run `make` on its own for the list):
+
+| Target | What it does |
+|---|---|
+| `make test` | Run the full unit suite (`node --test`). |
+| `make attack` | Run **only** the adversarial/hardening tests — malformed route → `400`, DNS-rebind → `403`, CRLF header-injection reject, corrupt-data-file tolerance, crash-survival of a pre-persisted bad route, and the `delayMs` cap. |
+| `make demo` | A reproducible end-to-end run on an ephemeral port and a throwaway data file: define a route, hit it, then show the honest JSON 404. |
+| `make bench` | Serving latency and match-cost scaling at 1 / 100 / 1000 routes — see [BENCHMARKS.md](BENCHMARKS.md). |
+
+**Try the attacks:** `make attack` runs the hardening suite on its own so you can see the tool
+survive the malformed input it's built to survive.
+
 ## What it never does
 
 - Never listens on anything but `127.0.0.1`.
@@ -221,13 +267,15 @@ npm test
 ```
 
 Runs the unit suite on Node's own built-in test runner (`node --test`) — no `npm install`, no
-dependencies to pull. As of this release that's **35 tests, all passing**: six cover the path
+dependencies to pull. As of this release that's **41 tests, all passing**: six cover the path
 matcher (exact vs. trailing-`*` prefix, method matching, disabled routes, and first-match-wins
 order), fifteen cover the route store (defaults, field validation, the `delayMs` cap, atomic-write
 save/reload round-trip and temp-file cleanup on a failed rename, update, remove, and recovering
-from a corrupt data file), and fourteen exercise the HTTP layer (the `/_mock` management API,
+from a corrupt data file), fourteen exercise the HTTP layer (the `/_mock` management API,
 delay-timing accuracy, in-flight route mutation, input validation and content-type over real HTTP,
-and resilience — a route persisted by an older build is served as a 500, never a process crash).
+and resilience — a route persisted by an older build is served as a 500, never a process crash),
+and six cover the launcher CLI (`--version`, `--help`, `--json` banner, an unknown-flag usage error,
+and the startup exit-code contract for a port already in use and an unusable data-file path).
 
 ## Contributing
 

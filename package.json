@@ -1,6 +1,6 @@
 {
   "name": "@strato-dan/mock",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "[DAN] MOCK — local-first API mocking. Define a response, hit the URL, no backend to deploy.",
   "license": "MIT",
   "type": "module",
