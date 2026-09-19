@@ -7,6 +7,7 @@ export function findMatch(routes, method, pathname) {
   for (const r of routes) {
     if (!r.enabled) continue;
     if (r.method !== "*" && r.method !== method) continue;
+    if (typeof r.path !== "string") continue;
     if (r.path.endsWith("*")) {
       const prefix = r.path.slice(0, -1);
       if (pathname.startsWith(prefix)) return r;

@@ -277,7 +277,7 @@ test("RESILIENCE: routes persisted by an older (non-validating) build are served
   try {
     assert.equal((await req(port, "GET", "/bad-status")).status, 500, "an out-of-range status is a 500, not a crash");
     assert.equal((await req(port, "GET", "/bad-header")).status, 500, "an illegal header is a 500, not a crash");
-    assert.equal((await req(port, "GET", "/no-match")).status, 500, "a non-string persisted path (matcher TypeError) is a 500, not a crash");
+    assert.equal((await req(port, "GET", "/no-match")).status, 404, "a non-string persisted path is skipped gracefully, resulting in an honest 404");
     // Still alive and serving after all three would-be crashes — the whole point of the fix.
     assert.equal((await req(port, "GET", "/bad-status")).status, 500, "the process survived and keeps serving");
   } finally {
