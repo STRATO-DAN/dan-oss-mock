@@ -3,6 +3,21 @@
 All notable changes to `@strato-dan/mock` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.3.0] — 2026-09-19
+
+### Security — breaking
+
+- **The management API now requires a bearer token.** Previously any local process/browser page
+  could add, edit, or delete mocked routes with no credential at all. A random 32+ byte token
+  (or `DAN_OSS_MOCK_TOKEN`) is now printed on stderr at startup and required (constant-time
+  checked) on every `/_mock/api/*` call, plus a same-origin/`Sec-Fetch-Site` cross-site guard and a
+  content-type gate on writes. **Mocked routes themselves remain unauthenticated, by design,
+  unchanged.**
+- Concurrently-held artificial response delays are now capped (`DAN_OSS_MOCK_MAX_DELAYS`, default
+  20; over it, 503) instead of unbounded concurrent sleeping sockets.
+- Total routes/state size is now bounded (`MAX_ROUTES` 200, `MAX_STATE_BYTES` 5MB).
+- The persisted state file is now 0600 (owner-only).
+
 ## [0.2.0] — 2026-09-17
 
 Cross-cutting polish. All additive — no behavior change to existing routes, and still **zero runtime
