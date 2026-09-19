@@ -18,12 +18,14 @@
 > `npx @strato-dan/mock` runs it and `npm test` tests it. Pure Node standard library (Node ≥ 18).
 > Full breakdown under [Dependencies](#dependencies).
 
-> 🔴 **No authentication, by design — a dev-only tool, stated plainly, not left for you to
-> discover.** MOCK's management API (`/_mock`) and every mocked route are **unauthenticated**.
-> Localhost is not a security boundary — another local process, or a web page open in your
-> browser, can reach a loopback port too. This is fine for its actual job (a local dev mock), and
-> wrong for anything else: **never** bind it beyond `127.0.0.1`, **never** expose it through a
-> reverse proxy or tunnel, and **never** point it at real production traffic, secrets, or data.
+> 🔴 **Split trust model, stated plainly, not left for you to discover.** The management API
+> (`/_mock/api/*`) **requires a bearer token** (printed once on stderr at startup, or your own
+> 32+ character `DAN_OSS_MOCK_TOKEN`; browser cross-origin management requests are refused).
+> The **mocked routes themselves are unauthenticated, by design** — they simulate real backends.
+> Localhost is not a security boundary — another local process can reach a loopback port too.
+> This is fine for its actual job (a local dev mock), and wrong for anything else: **never**
+> bind it beyond `127.0.0.1`, **never** expose it through a reverse proxy or tunnel, and
+> **never** point it at real production traffic, secrets, or data.
 
 Local-first API mocking. Define a response, hit the URL — no backend to deploy, nothing to
 configure beyond the route itself.

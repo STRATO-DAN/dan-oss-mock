@@ -314,3 +314,43 @@ test("CONTENT-TYPE: a route that sets its own content-type (any casing) override
     await cleanup(dataFile);
   }
 });
+
+
+// ── body budgets (FINDING 08): Content-Length pre-check + global in-flight cap, both 413 ───────
+
+
+test("BODY BUDGET: a declared oversized body is refused 413 before buffering", async () => {
+  process.env.DAN_OSS_MOCK_MAX_BODY = "1024";
+  const { server, port, dataFile } = await start();
+  try {
+    // Node sets Content-Length from the JSON length (~2 KiB) — over the 1 KiB test cap.
+    const big = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/big", body: "x".repeat(2048) } });
+    assert.equal(big.status, 413, "declared oversize must be 413, not buffered then 400");
+    const list = await req(port, "GET", "/_mock/api/routes");
+    assert.equal(list.json.routes.length, 0, "a refused body persists nothing");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+    delete process.env.DAN_OSS_MOCK_MAX_BODY;
+  }
+});
+
+
+test("BODY BUDGET: the global in-flight cap refuses with 413 and releases on settle", async () => {
+  // A 100-byte global cap with a 10 MiB per-request cap: one ~200-byte body must trip the
+  // GLOBAL budget (not the per-request one), proving the accounting is really wired.
+  process.env.DAN_OSS_MOCK_MAX_INFLIGHT = "100";
+  const { server, port, dataFile } = await start();
+  try {
+    const r = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/cap", body: "y".repeat(200) } });
+    assert.equal(r.status, 413, "global budget trip must be 413");
+    assert.match(r.json.reason, /concurrent|global cap/, "the reason must name the global budget, not the per-request cap");
+    // The refused request settled and released its charge: a small body passes right after.
+    const ok = await req(port, "POST", "/_mock/api/routes", { body: { method: "GET", path: "/small", body: "z" } });
+    assert.equal(ok.status, 200, "budget released on settle — no leak");
+  } finally {
+    stop(server);
+    await cleanup(dataFile);
+    delete process.env.DAN_OSS_MOCK_MAX_INFLIGHT;
+  }
+});

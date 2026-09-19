@@ -1,11 +1,19 @@
 # Security Policy
 
-## 🔴 This tool has no authentication, by design
+## 🔴 Split trust model: authenticated management, unauthenticated mock surface (by design)
 
-MOCK is a local development mock — its management API and every mocked route are
-**unauthenticated**, deliberately, because it's a dev-only tool where localhost is the only
-boundary that exists. This is **not** an oversight to report as a vulnerability: it's the stated
-scope. What it means in practice:
+MOCK is a local development mock with two planes:
+
+- **Management API (`/_mock/api/*`) — bearer-token authenticated.** A random 32+ byte token is
+  generated per start (printed once on stderr — protect it like a credential) or supplied via
+  `DAN_OSS_MOCK_TOKEN`. Cross-origin browser management requests are refused outright, and
+  management writes require `Content-Type: application/json`. Stealing the token from the
+  terminal output or process list administers the mock — run it as the user who owns that trust.
+- **Mocked routes — unauthenticated, deliberately.** They simulate real backends for local
+  development; localhost is the only boundary that exists there. This is **not** an oversight
+  to report as a vulnerability: it's the stated scope.
+
+What it means in practice:
 
 - **Never** bind it to a non-loopback interface (`0.0.0.0` or a real network address).
 - **Never** expose it through a reverse proxy, tunnel, or port-forward.
