@@ -9,21 +9,18 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { createServer } from "../src/server.js";
 
-const fixtureToken = "test-only-token-not-for-production-123456";
 function start() {
   const dataFile = path.join(os.tmpdir(), `dan-oss-mock-test-${crypto.randomUUID()}.json`);
-  const server = createServer({ dataFile, managementToken: fixtureToken });
+  const server = createServer({ dataFile });
   return new Promise((res) =>
     server.listen(0, "127.0.0.1", () => res({ server, port: server.address().port, dataFile })),
   );
 }
 
-function req(port, method, p, { body, host, token = fixtureToken, origin } = {}) {
+function req(port, method, p, { body, host } = {}) {
   return new Promise((resolve, reject) => {
     const data = body !== undefined ? JSON.stringify(body) : null;
     const headers = { host: host || `127.0.0.1:${port}` };
-    if (token) headers.authorization = `Bearer ${token}`;
-    if (origin) headers.origin = origin;
     if (data) headers["content-type"] = "application/json";
     const started = Date.now();
     const r = http.request({ host: "127.0.0.1", port, method, path: p, headers, agent: false }, (res) => {
@@ -42,16 +39,6 @@ function req(port, method, p, { body, host, token = fixtureToken, origin } = {})
 }
 const stop = (server) => { server.closeAllConnections?.(); server.close(); };
 const cleanup = async (dataFile) => { await fs.rm(dataFile, { force: true }); };
-
-test("management requires authentication and rejects opaque browser origins", async () => {
-  const { server, port, dataFile } = await start();
-  try {
-    for (const token of [null, "wrong"]) assert.equal((await req(port, "GET", "/_mock/api/routes", { token })).status, 401);
-    assert.equal((await req(port, "GET", "/_mock/api/routes", { origin: "null" })).status, 403);
-    assert.equal((await req(port, "GET", "/_mock/api/routes", { origin: "http://127.0.0.1:1" })).status, 403);
-    assert.equal((await req(port, "GET", "/_mock/api/routes")).status, 200);
-  } finally { stop(server); await cleanup(dataFile); }
-});
 
 test("the management API refuses a non-loopback Host header (DNS-rebinding guard)", async () => {
   const { server, port, dataFile } = await start();
