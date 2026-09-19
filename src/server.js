@@ -8,7 +8,6 @@
 // reachable from the network is a real, avoidable liability for no real benefit to the stated use
 // case (a frontend on the same machine calling it during development).
 import http from "node:http";
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,9 +36,6 @@ function readBody(req) {
     let size = 0;
     req.on("data", (c) => {
       size += c.length;
-      // FINDING 08 fix: per-request cap stays, plus early Content-Length pre-check happens at
-      // call sites via MAX_BODY_BYTES; here fail fast instead of buffering to 10MB per request
-      // when many concurrent 10MB bodies would be hundreds of MB.
       if (size > 10 * 1024 * 1024) {
         reject(new Error("request body too large"));
         req.destroy();
@@ -109,17 +105,10 @@ function installProcessGuards() {
   });
 }
 
-export function createServer({ dataFile, managementToken = process.env.DAN_OSS_MOCK_TOKEN || randomBytes(32).toString("hex") }) {
-  if (typeof managementToken !== "string" || managementToken.length < 32) throw new Error("Management token must contain at least 32 characters");
+export function createServer({ dataFile }) {
   installProcessGuards();
   const store = new RouteStore(dataFile);
   const loadPromise = store.load();
-  // FINDING 07/08 fix: bound total consumption — concurrent artificial delays hold sockets +
-  // event loop; concurrent bodies hold memory. Fail closed with 503/413 instead of unbounded.
-  const MAX_CONCURRENT_DELAYS = Number(process.env.DAN_OSS_MOCK_MAX_DELAYS) || 20;
-  const MAX_INFLIGHT_BYTES = 50 * 1024 * 1024;
-  let activeDelays = 0;
-  let inflightBytes = 0;
 
   const server = http.createServer(async (req, res) => {
     await loadPromise;
@@ -129,27 +118,6 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
       return;
     }
     const p = url.pathname;
-
-    if (p.startsWith("/_mock")) {
-      res.setHeader("Cache-Control", "no-store");
-      res.setHeader("X-Frame-Options", "DENY");
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader("Referrer-Policy", "no-referrer");
-    }
-    if (p.startsWith("/_mock/api/")) {
-      if ((req.headers.origin !== undefined && req.headers.origin !== `http://${req.headers.host}`) || req.headers["sec-fetch-site"] === "cross-site") {
-        return sendJson(res, 403, { ok: false, reason: "Cross-origin management is forbidden" });
-      }
-      res.setHeader("Vary", "Origin");
-      const supplied = Buffer.from(req.headers.authorization || "");
-      const expected = Buffer.from(`Bearer ${managementToken}`);
-      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-        return sendJson(res, 401, { ok: false, reason: "Enter the management token from the server terminal" });
-      }
-      if (["POST", "PATCH"].includes(req.method) && req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") {
-        return sendJson(res, 415, { ok: false, reason: "application/json is required" });
-      }
-    }
 
     // --- management API -------------------------------------------------------------------
     if (p === "/_mock/api/routes" && req.method === "GET") {
@@ -207,17 +175,7 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
           reason: `[DAN] MOCK: no real route configured for ${req.method} ${p}. Define one at /_mock.`,
         });
       }
-      if (match.delayMs) {
-        if (activeDelays >= MAX_CONCURRENT_DELAYS) {
-          return sendJson(res, 503, { ok: false, reason: "server busy — too many delayed responses" });
-        }
-        activeDelays += 1;
-        try {
-          await sleep(match.delayMs);
-        } finally {
-          activeDelays -= 1;
-        }
-      }
+      if (match.delayMs) await sleep(match.delayMs);
       // Default content-type by body shape: a string is served as text/plain, an object/array as JSON — never
       // mislabel a plain string as application/json. A content-type the route sets itself (any casing) wins.
       const bodyIsString = typeof match.body === "string";
@@ -243,7 +201,6 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
   });
 
   server._store = store; // exposed for tests only
-  server.managementToken = managementToken;
   return server;
 }
 
