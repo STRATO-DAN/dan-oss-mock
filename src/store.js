@@ -11,6 +11,10 @@ import crypto from "node:crypto";
 // could tie a socket up effectively forever and, past ~2^31 ms, overflow setTimeout's 32-bit signed delay
 // and misfire immediately. 60s is far longer than any real "slow response" a dev mock needs to simulate.
 const MAX_DELAY_MS = 60_000;
+// FINDING 06 fix: aggregate management state is bounded — per-route creation without a global cap
+// is a local resource-exhaustion primitive. 200 routes is far beyond real dev-mock use.
+const MAX_ROUTES = 200;
+const MAX_STATE_BYTES = 5 * 1024 * 1024;
 
 // RFC 7230 header field-name = token; reject anything else so an illegal name never reaches res.writeHead
 // (which would throw ERR_INVALID_HTTP_TOKEN and take the process down).
@@ -78,7 +82,12 @@ export class RouteStore {
     try {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw);
-      this.routes = Array.isArray(parsed.routes) ? parsed.routes : [];
+      // FINDING 09/14 note: the persistence file is a second API. Legacy files may contain
+      // pre-validation routes (bad status/header/non-string path) — they are kept verbatim so
+      // the serve path returns an honest 500 (resilience contract) instead of crashing; NEW
+      // writes via add()/update() are strictly validated. Count and cap to MAX_ROUTES.
+      const rawRoutes = Array.isArray(parsed.routes) ? parsed.routes : [];
+      this.routes = rawRoutes.slice(0, MAX_ROUTES);
     } catch (err) {
       if (err.code !== "ENOENT") {
         // A real parse/read failure on an EXISTING file is not the same as "no file yet" — start
@@ -101,8 +110,11 @@ export class RouteStore {
     const mine = prev.catch(() => {}).then(async () => {
       const tmp = path.join(dir, `.${path.basename(this.filePath)}.${process.pid}.${crypto.randomUUID()}.tmp`);
       try {
-        await fs.writeFile(tmp, JSON.stringify({ routes: this.routes }, null, 2), "utf8");
+        await fs.writeFile(tmp, JSON.stringify({ routes: this.routes }, null, 2), { encoding: "utf8", mode: 0o600 });
+        // FINDING 09 fix: owner-only persistence — the file is outside the HTTP auth boundary.
+        try { await fs.chmod(tmp, 0o600); } catch {}
         await fs.rename(tmp, this.filePath);
+        try { await fs.chmod(this.filePath, 0o600); } catch {}
       } catch (err) {
         // A write or rename failure must not leave the half-written temp orphaned on disk. Best-effort
         // unlink (ignore its own failure / a temp that never got created), then rethrow the real error.
@@ -119,6 +131,10 @@ export class RouteStore {
   }
 
   add(route) {
+    // FINDING 06 fix: fail-closed global budget — 413-style throw (management API maps to 400/413).
+    if (this.routes.length >= MAX_ROUTES) {
+      throw new Error(`route limit reached (max ${MAX_ROUTES} routes)`);
+    }
     // Validate every field BEFORE pushing, so a bad route is rejected (throws → 400) and never persisted.
     const real = {
       id: crypto.randomUUID(),
@@ -131,6 +147,10 @@ export class RouteStore {
       enabled: route.enabled !== false,
       createdAt: new Date().toISOString(),
     };
+    const approx = JSON.stringify([...this.routes, real]).length;
+    if (approx > MAX_STATE_BYTES) {
+      throw new Error(`mock state too large (max ${MAX_STATE_BYTES} bytes)`);
+    }
     this.routes.push(real);
     return real;
   }
@@ -148,6 +168,11 @@ export class RouteStore {
     if (patch.status !== undefined) merged.status = normalizeStatus(merged.status);
     if (patch.headers !== undefined) merged.headers = validateHeaders(merged.headers);
     if (patch.delayMs !== undefined) merged.delayMs = normalizeDelay(merged.delayMs);
+    const candidate = this.routes.map((r, idx) => (idx === i ? merged : r));
+    const approx = JSON.stringify(candidate).length;
+    if (approx > MAX_STATE_BYTES) {
+      throw new Error(`mock state too large (max ${MAX_STATE_BYTES} bytes)`);
+    }
     this.routes[i] = merged;
     return this.routes[i];
   }
