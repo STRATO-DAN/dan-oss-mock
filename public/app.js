@@ -1,6 +1,18 @@
 // [DAN] MOCK — real client logic, plain fetch + DOM, no framework.
 
 const $ = (id) => document.getElementById(id);
+async function managementFetch(url, options = {}) {
+  const res = await fetch(url, { ...options, headers: { ...options.headers, authorization: `Bearer ${$("managementToken").value}` } });
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}));
+    throw new Error(error.reason || `Request rejected (${res.status})`);
+  }
+  return res;
+}
+const showError = err => { $("formStatus").textContent = err.message; };
+$("unlockBtn").addEventListener("click", () => loadRoutes().catch(showError));
+$("lockBtn").addEventListener("click", () => { $("managementToken").value = ""; $("routeList").replaceChildren(); });
+window.addEventListener("pagehide", () => { $("managementToken").value = ""; });
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -13,7 +25,7 @@ async function loadStatus() {
 }
 
 async function loadRoutes() {
-  const res = await fetch("/_mock/api/routes");
+  const res = await managementFetch("/_mock/api/routes");
   const data = await res.json();
   const list = $("routeList");
   if (!data.ok || data.routes.length === 0) {
@@ -66,7 +78,7 @@ async function addRoute(e) {
     delayMs: Number($("fDelay").value) || 0,
   };
   status.innerHTML = `<span class="dan-seal"></span>Adding the route…`;
-  const res = await fetch("/_mock/api/routes", {
+  const res = await managementFetch("/_mock/api/routes", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload),
@@ -92,10 +104,10 @@ async function onListClick(e) {
     // A route is real config someone entered — confirm before removing it.
     const path = row.querySelector(".route-path")?.textContent.trim().split("\n")[0] || "this route";
     if (!confirm(`Delete ${path}? This can't be undone.`)) return;
-    await fetch(`/_mock/api/routes/${id}`, { method: "DELETE" });
+    await managementFetch(`/_mock/api/routes/${id}`, { method: "DELETE" });
   } else if (btn.dataset.action === "toggle") {
     const enabled = row.classList.contains("disabled"); // currently disabled -> enable
-    await fetch(`/_mock/api/routes/${id}`, {
+    await managementFetch(`/_mock/api/routes/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ enabled }),
@@ -104,10 +116,10 @@ async function onListClick(e) {
   await loadRoutes();
 }
 
-$("routeForm").addEventListener("submit", addRoute);
-$("routeList").addEventListener("click", onListClick);
+$("routeForm").addEventListener("submit", event => addRoute(event).catch(showError));
+$("routeList").addEventListener("click", event => onListClick(event).catch(showError));
 
 (async () => {
   await loadStatus();
-  await loadRoutes();
+  $("routeList").textContent = "Locked. Enter the management token to load routes.";
 })();

@@ -89,14 +89,15 @@ test("an unknown flag is a usage error: one-line stderr and exit 2", async () =>
 test("--json prints exactly one JSON object {url,port,dataFile} and the server really serves", async () => {
   const port = await freePort();
   const dataFile = path.join(os.tmpdir(), `dan-oss-mock-bin-${crypto.randomUUID()}.json`);
-  const srv = await boot(["--json"], { DAN_OSS_MOCK_PORT: String(port), DAN_OSS_MOCK_DATA: dataFile });
+  const managementToken = "test-launcher-management-token-123456789";
+  const srv = await boot(["--json"], { DAN_OSS_MOCK_PORT: String(port), DAN_OSS_MOCK_DATA: dataFile, DAN_OSS_MOCK_TOKEN: managementToken });
   try {
     const banner = JSON.parse(srv.firstLine); // must parse as one object
     assert.equal(banner.port, port);
     assert.equal(banner.url, `http://127.0.0.1:${port}`);
     assert.equal(banner.dataFile, dataFile);
     // the server is genuinely up on that port
-    const res = await fetch(`http://127.0.0.1:${port}/_mock/api/routes`);
+    const res = await fetch(`http://127.0.0.1:${port}/_mock/api/routes`, { headers: { authorization: `Bearer ${managementToken}` } });
     assert.equal(res.status, 200);
   } finally {
     await srv.stop();
