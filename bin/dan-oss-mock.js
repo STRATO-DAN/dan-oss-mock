@@ -45,7 +45,7 @@ function printHelp() {
       `  1   startup failure (port already in use, unusable data-file path)\n` +
       `  2   usage error (unknown flag)\n` +
       `\n` +
-      `The server binds 127.0.0.1 only and has no authentication by design — it is a local dev tool.\n`,
+      `Management requires a bearer token, printed on stderr at startup. Set DAN_OSS_MOCK_TOKEN (32+ characters) to supply your own. Mock routes remain unauthenticated.\n`,
   );
 }
 
@@ -113,6 +113,7 @@ try {
 
 const baseUrl = `http://127.0.0.1:${port}`;
 const uiUrl = `${baseUrl}/_mock`;
+process.stderr.write(`Management token (keep private): ${server.managementToken}\n`);
 
 if (jsonBanner) {
   // Exactly one JSON object on stdout, nothing else — safe to pipe into `jq` or parse in a script.
