@@ -31,32 +31,77 @@ function sendJson(res, status, body) {
   res.end(data);
 }
 
-function readBody(req) {
+// Fail-closed body limits. Per-request cap bounds one body; the global in-flight budget bounds
+// ALL concurrently-buffering bodies together (the FINDING 08 gap: N concurrent 10 MiB bodies is
+// hundreds of MiB). Both are env-overridable for tests; production defaults never change.
+function bodyLimits() {
+  const perRequest = Number(process.env.DAN_OSS_MOCK_MAX_BODY) || 10 * 1024 * 1024;
+  const inflight = Number(process.env.DAN_OSS_MOCK_MAX_INFLIGHT) || 50 * 1024 * 1024;
+  return { perRequest, inflight };
+}
+
+/** A body rejection that must surface as 413, not the generic 400. */
+class BodyTooLargeError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "BodyTooLargeError";
+    this.status = 413;
+  }
+}
+
+function readBody(req, account) {
+  const { perRequest, inflight } = bodyLimits();
   return new Promise((resolve, reject) => {
+    // Fast Content-Length pre-check: when the client declares its size up front, refuse an
+    // oversized body BEFORE buffering a single byte into RAM. A missing/garbled header falls
+    // through to chunk accounting below (never trusted, never a bypass — just no fast path).
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > perRequest) {
+      // Declared oversize: refuse WITHOUT consuming the body — but do NOT destroy the socket
+      // here (that races and tears down the connection before our 413 is written). Pause the
+      // stream; the handler answers 413 + Connection: close, which frees the socket cleanly.
+      req.pause();
+      reject(new BodyTooLargeError(`request body too large (declared ${declared} bytes, max ${perRequest})`));
+      return;
+    }
     let chunks = [];
     let size = 0;
+    let charged = 0;
+    let settled = false;
+    const settle = (fn) => {
+      if (settled) return;
+      settled = true;
+      if (charged > 0 && account) account(-charged);
+      fn();
+    };
     req.on("data", (c) => {
       size += c.length;
-      // FINDING 08 fix: per-request cap stays, plus early Content-Length pre-check happens at
-      // call sites via MAX_BODY_BYTES; here fail fast instead of buffering to 10MB per request
-      // when many concurrent 10MB bodies would be hundreds of MB.
-      if (size > 10 * 1024 * 1024) {
-        reject(new Error("request body too large"));
-        req.destroy();
+      if (size > perRequest) {
+        req.pause();
+        settle(() => reject(new BodyTooLargeError(`request body too large (max ${perRequest} bytes)`)));
         return;
       }
+      if (account && !account(c.length)) {
+        req.pause();
+        settle(() => reject(new BodyTooLargeError(`server busy — too many concurrent request bodies (global cap ${inflight} bytes)`)));
+        return;
+      }
+      charged += c.length;
       chunks.push(c);
     });
     req.on("end", () => {
-      const raw = Buffer.concat(chunks).toString("utf8");
-      if (!raw) return resolve({});
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error("invalid JSON body"));
-      }
+      settle(() => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (!raw) return resolve({});
+        try {
+          resolve(JSON.parse(raw));
+        } catch {
+          reject(new Error("invalid JSON body"));
+        }
+      });
     });
-    req.on("error", reject);
+    req.on("error", (err) => settle(() => reject(err)));
+    req.on("close", () => settle(() => reject(new Error("request closed while reading body"))));
   });
 }
 
@@ -117,9 +162,20 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
   // FINDING 07/08 fix: bound total consumption — concurrent artificial delays hold sockets +
   // event loop; concurrent bodies hold memory. Fail closed with 503/413 instead of unbounded.
   const MAX_CONCURRENT_DELAYS = Number(process.env.DAN_OSS_MOCK_MAX_DELAYS) || 20;
-  const MAX_INFLIGHT_BYTES = 50 * 1024 * 1024;
+  const MAX_INFLIGHT_BYTES = Number(process.env.DAN_OSS_MOCK_MAX_INFLIGHT) || 50 * 1024 * 1024;
   let activeDelays = 0;
   let inflightBytes = 0;
+  // Global in-flight body budget: charge per chunk, release on settle. Returns false when the
+  // charge would exceed the cap — the caller refuses with 413 instead of buffering.
+  const chargeBody = (delta) => {
+    if (delta < 0) {
+      inflightBytes = Math.max(0, inflightBytes + delta);
+      return true;
+    }
+    if (inflightBytes + delta > MAX_INFLIGHT_BYTES) return false;
+    inflightBytes += delta;
+    return true;
+  };
 
   const server = http.createServer(async (req, res) => {
     await loadPromise;
@@ -157,7 +213,7 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
     }
     if (p === "/_mock/api/routes" && req.method === "POST") {
       try {
-        const body = await readBody(req);
+        const body = await readBody(req, chargeBody);
         if (!body.method || !body.path) {
           return sendJson(res, 400, { ok: false, reason: "method and path are required" });
         }
@@ -165,18 +221,29 @@ export function createServer({ dataFile, managementToken = process.env.DAN_OSS_M
         await store.save();
         return sendJson(res, 200, { ok: true, route });
       } catch (err) {
+        // Body-budget rejections are 413 (resource policy) + Connection: close so the
+        // paused (partially unread) request stream can't poison a reused socket.
+        // Everything else stays 400.
+        if (err instanceof BodyTooLargeError) {
+          res.setHeader("Connection", "close");
+          return sendJson(res, err.status, { ok: false, reason: err.message });
+        }
         return sendJson(res, 400, { ok: false, reason: err.message });
       }
     }
     const routeIdMatch = p.match(/^\/_mock\/api\/routes\/([^/]+)$/);
     if (routeIdMatch && req.method === "PATCH") {
       try {
-        const body = await readBody(req);
+        const body = await readBody(req, chargeBody);
         const route = store.update(routeIdMatch[1], body);
         if (!route) return sendJson(res, 404, { ok: false, reason: "no such route" });
         await store.save();
         return sendJson(res, 200, { ok: true, route });
       } catch (err) {
+        if (err instanceof BodyTooLargeError) {
+          res.setHeader("Connection", "close");
+          return sendJson(res, err.status, { ok: false, reason: err.message });
+        }
         return sendJson(res, 400, { ok: false, reason: err.message });
       }
     }
