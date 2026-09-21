@@ -3,6 +3,20 @@
 All notable changes to `@strato-dan/mock` are documented here.
 This project uses [semantic versioning](https://semver.org/).
 
+## [0.3.1] — 2026-09-21
+
+### Fixed
+
+- **Global in-flight body budget actually wired in.** `MAX_INFLIGHT_BYTES` existed but wasn't
+  charged against per-request reads — many concurrent bodies just under the per-request cap could
+  still add up to hundreds of MiB with no aggregate limit enforced. `readBody` now charges/releases
+  against the real global budget (settle-once, env-overridable via `DAN_OSS_MOCK_MAX_INFLIGHT`),
+  tripping a 413 instead of buffering unbounded.
+- **Content-Length pre-check.** A declared-oversize body is now refused (413) before reading a
+  single byte, instead of only after buffering up to the per-request cap.
+- README/SECURITY now describe the real split trust model explicitly: bearer-authed management
+  API, unauthenticated mock surface by design (matches the 0.3.0 change, docs hadn't caught up).
+
 ## [0.3.0] — 2026-09-19
 
 ### Security — breaking
