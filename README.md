@@ -269,13 +269,14 @@ npm test
 ```
 
 Runs the unit suite on Node's own built-in test runner (`node --test`) — no `npm install`, no
-dependencies to pull. As of this release that's **41 tests, all passing**: six cover the path
+dependencies to pull. As of this release that's **44 tests, all passing**: six cover the path
 matcher (exact vs. trailing-`*` prefix, method matching, disabled routes, and first-match-wins
 order), fifteen cover the route store (defaults, field validation, the `delayMs` cap, atomic-write
 save/reload round-trip and temp-file cleanup on a failed rename, update, remove, and recovering
-from a corrupt data file), fourteen exercise the HTTP layer (the `/_mock` management API,
+from a corrupt data file), seventeen exercise the HTTP layer (the `/_mock` management API,
 delay-timing accuracy, in-flight route mutation, input validation and content-type over real HTTP,
-and resilience — a route persisted by an older build is served as a 500, never a process crash),
+CRLF header-injection rejection, and resilience — a route persisted by an older build is served as
+a 500, never a process crash),
 and six cover the launcher CLI (`--version`, `--help`, `--json` banner, an unknown-flag usage error,
 and the startup exit-code contract for a port already in use and an unusable data-file path).
 
